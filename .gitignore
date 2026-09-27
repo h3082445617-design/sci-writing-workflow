@@ -1,0 +1,11 @@
+.DS_Store
+__pycache__/
+.env
+.env.*
+private/
+local-data/
+*.pdf
+*.docx
+*.aux
+*.log
+*.synctex.gz
