@@ -10,6 +10,7 @@
 2. 复制 [项目任务卡](templates/project.md) 和 [阶段验收表](templates/gates.csv)，填写目标期刊、文体、方法、已有材料和缺口。
 3. 使用 [执行提示词](prompts/execute.md)，按阶段交付。结构和主体分别确认后进入后续写作。
 4. 用 [工作量表](templates/workload.csv) 记录真实样本，不把未知填成零。
+   用 [证据与缺口矩阵](templates/evidence-gap-matrix.md) 将样文分析转为本稿可执行计划。
 5. 按 [维护规范](CONTRIBUTING.md) 更新流程与证据。
 
 支持技能的助手可使用 [skill](skills/sci-writing-workflow/SKILL.md)。它不依赖特定模型或商业平台；自动化工具和终端监督不是运行本流程的前提。
