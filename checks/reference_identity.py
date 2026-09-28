@@ -32,9 +32,15 @@ USER_AGENT = "sci-writing-workflow-reference-audit/1.0"
 
 STATUS_MATCH = "doi_year_match"
 STATUS_DUAL_YEAR = "dual_year_ambiguous"
+STATUS_ONLINE_AHEAD = "online_before_issue"
 STATUS_YEAR_MISMATCH = "year_mismatch"
 STATUS_NO_DOI = "manual_needed_no_doi"
 STATUS_LOOKUP_FAILED = "lookup_failed"
+
+
+def _year(record: dict, field: str) -> int | None:
+    parts = (record.get(field) or {}).get("date-parts") or [[None]]
+    return parts[0][0] if parts and parts[0] else None
 
 
 def parse_bib(path: Path) -> dict[str, dict[str, str]]:
@@ -83,15 +89,45 @@ def fetch(doi: str, timeout: int = 15) -> dict:
 
 
 def classify(record: dict, cited_year: int | None) -> tuple[str, str | None]:
-    online = (record.get("published-online") or {}).get("date-parts", [[None]])[0][0]
-    print_year = (record.get("published-print") or {}).get("date-parts", [[None]])[0][0]
+    """Place the bib year against the years Crossref reports for the DOI.
+
+    Crossref often carries only published-print, dated to the issue rather
+    than to the article. A paper first posted online in September 2025 whose
+    issue is dated January 2026 returns print 2026 and online None, so a bib
+    citing 2025 is correct and would nevertheless be reported as a mismatch
+    if print were the only year consulted. The acceptance window is therefore
+    the full set of dates Crossref knows about -- online, print, the general
+    published date, and the record creation date, which tracks first posting.
+    Anything inside that window is not an error; a year outside it is.
+    """
+    online = _year(record, "published-online")
+    print_year = _year(record, "published-print")
+    published = _year(record, "published")
+    created = _year(record, "created")
+    known = {y for y in (online, print_year, published, created) if y}
     if cited_year is None:
         return STATUS_YEAR_MISMATCH, "draft cites no parseable year"
-    if cited_year not in (online, print_year):
-        return STATUS_YEAR_MISMATCH, f"draft {cited_year} not in {online}/{print_year}"
-    if online and print_year and online != print_year:
-        return STATUS_DUAL_YEAR, f"online {online}, print {print_year}; draft uses {cited_year}"
-    return STATUS_MATCH, None
+    if not known:
+        return STATUS_LOOKUP_FAILED, "Crossref returned no date for this DOI"
+    if cited_year in known:
+        # Which year to print is a house-style decision when the article was
+        # posted in one year and issued in another, so the choice is surfaced
+        # rather than resolved.
+        distinct = sorted({online, print_year} - {None})
+        if len(distinct) > 1:
+            return STATUS_DUAL_YEAR, (
+                f"online {online}, print {print_year}; draft uses {cited_year}"
+            )
+        if created and cited_year == created and created != (published or created):
+            return STATUS_ONLINE_AHEAD, (
+                f"first posted {created}, issue dated {published or print_year}; "
+                f"draft uses {cited_year}"
+            )
+        return STATUS_MATCH, None
+    return STATUS_YEAR_MISMATCH, (
+        f"draft {cited_year} not in online {online}/print {print_year}/"
+        f"published {published}/created {created}"
+    )
 
 
 def audit(manuscript: Path, bib_path: Path, sleep: float) -> list[dict]:
@@ -147,7 +183,8 @@ def main() -> int:
         args.json.write_text(json.dumps(results, ensure_ascii=False, indent=2) + "\n")
 
     blocking = sum(counts.get(s, 0) for s in (STATUS_YEAR_MISMATCH, STATUS_LOOKUP_FAILED))
-    review = counts.get(STATUS_DUAL_YEAR, 0) + counts.get(STATUS_NO_DOI, 0)
+    review = (counts.get(STATUS_DUAL_YEAR, 0) + counts.get(STATUS_NO_DOI, 0)
+              + counts.get(STATUS_ONLINE_AHEAD, 0))
     if blocking:
         print(f"RESULT        FAIL ({blocking} unresolved)")
         return 1

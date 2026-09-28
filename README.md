@@ -17,8 +17,10 @@
    ```bash
    python3 checks/manuscript_audit.py 稿件.md --bib refs.bib \
        --evidence-dir evidence/fulltext --allow-derived derived.json --json audit.json
-   python3 checks/reference_identity.py refs.bib --json identity.json
+   python3 checks/reference_identity.py 稿件.md --bib refs.bib --json identity.json
    ```
+
+   两个脚本都以退出码表示结果：`manuscript_audit.py` 在硬门禁未过时非零退出，`reference_identity.py` 仅在年份无法解释时非零退出。需要联网的是后者。
 
 6. 按 [维护规范](CONTRIBUTING.md) 更新流程与证据。
 
