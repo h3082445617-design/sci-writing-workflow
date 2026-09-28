@@ -11,7 +11,16 @@
 3. 使用 [执行提示词](prompts/execute.md)，按阶段交付。结构和主体分别确认后进入后续写作。
 4. 用 [工作量表](templates/workload.csv) 记录真实样本，不把未知填成零。
    用 [证据与缺口矩阵](templates/evidence-gap-matrix.md) 将样文分析转为本稿可执行计划。
-5. 按 [维护规范](CONTRIBUTING.md) 更新流程与证据。
+   用 [主张台账](templates/claim-ledger.csv) 逐条登记核心主张的来源定位与支持状态。
+5. 阶段 5 运行可执行门禁，不靠记忆判断：
+
+   ```bash
+   python3 checks/manuscript_audit.py 稿件.md --bib refs.bib \
+       --evidence-dir evidence/fulltext --allow-derived derived.json --json audit.json
+   python3 checks/reference_identity.py refs.bib --json identity.json
+   ```
+
+6. 按 [维护规范](CONTRIBUTING.md) 更新流程与证据。
 
 支持技能的助手可使用 [skill](skills/sci-writing-workflow/SKILL.md)。它不依赖特定模型或商业平台；自动化工具和终端监督不是运行本流程的前提。
 
@@ -40,6 +49,8 @@ flowchart LR
 - 不强制每段自我反驳；保留真实反证和科学边界。
 - 提示词与内部审计不进入投稿内容；AI使用按期刊政策如实披露。
 - LaTeX为排版主源，表格可编辑，实际编译并检查成品。
+- 门禁必须可执行：占位0命中、引用键全部可解析、核心数字untraced=0 由 `checks/manuscript_audit.py` 判定；术语漂移与单位改写为提示项，人工裁定后登记。
+- 数字对得上不等于主张成立。术语改名、单位改写、少做统计比较、分母不披露都属于数字检查抓不到的缺陷，须逐条主张核验。
 - 先交可执行流程，全库文献扩样持续更新，不无限推迟作者可用成果。
 
 公开仓库不包含私人稿件、论文PDF、论文原图、下载信息或凭据。文献事实案例的权利仍属于原权利人。
