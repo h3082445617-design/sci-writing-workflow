@@ -34,7 +34,13 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-CITE_RE = re.compile(r"@([A-Za-z][A-Za-z0-9_:.-]*)")
+# A citation key may contain dots and dashes, but not at its end: the period
+# closing the sentence follows the key directly when the citation is the last
+# thing in it ("... as shown in @Key2020."), and a greedy character class
+# swallows that period into the key. The key then fails to resolve against the
+# bib and the draft is reported as citing a nonexistent reference. Trailing
+# separators are therefore trimmed after the match.
+CITE_RE = re.compile(r"@([A-Za-z][A-Za-z0-9_:.-]*[A-Za-z0-9])")
 BIB_KEY_RE = re.compile(r"@\w+\s*\{\s*([^,\s]+)\s*,")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$", re.MULTILINE)
 FIGURE_RE = re.compile(r"!\[(?P<cap>[^\]]*)\]\((?P<src>[^)]+)\)")
@@ -184,11 +190,56 @@ def strip_machine_identifiers(text: str) -> str:
     study's results, so leaving it in the pool trades a real check for a
     spurious pass: a draft value that collides with a PMID is reported as
     traced, which is the one direction this gate must never fail in.
+
+    Call this before de_markup, not after. The HTML reference-list rule keys
+    on the `id="R12"` attribute, and stripping tags first destroys exactly the
+    attribute the rule needs, so every PMC reference entry survives the cut.
     """
     text = BACK_BLOCK_RE.sub(" ", text)
     for pattern in REFERENCE_BLOCK_RES + IDENTIFIER_RES:
         text = pattern.sub(" ", text)
     return text
+
+
+def clean_source(raw: str, suffix: str) -> str:
+    """Prepare a source file for numeric extraction.
+
+    Order matters: identifier blocks are cut while the markup that identifies
+    them is still present, and only then are tags removed. Doing it the other
+    way round silently disables the HTML reference-list rule.
+    """
+    text = strip_machine_identifiers(raw)
+    if suffix.lower() in (".xml", ".html", ".htm"):
+        text = de_markup(text)
+    return text
+
+
+def source_identity(path: Path) -> str:
+    """Collapse every file belonging to one paper onto a single name.
+
+    The corpus names files `<paper>_<carrier>`, so one trial is present as
+    PRIMIS_fulltext, PRIMIS_elsevier, PRIMIS_lancet, PRIMIS_repository and two
+    appendices -- six stems, one paper. Keying corroboration on the stem
+    therefore counts that paper six times, which inflates how widely a value
+    appears to be attested and lets one source satisfy a test meant to require
+    several. The same paper reached as JATS and as extracted text is the same
+    paper; the comment on seen_in below has always claimed that, but the stem
+    only delivered it for the case where the two files share a basename.
+
+    The identifier is the leading token before the first underscore, which is
+    the convention the corpus already follows (PMID_PMCID, NAME_carrier). A
+    file with no underscore is its own identity.
+
+    Two limits are worth knowing. Where the leading token names a topic rather
+    than a paper (a working note called `methods_extra.txt`), the file keeps
+    its own identity and is counted as a source in its own right -- which it
+    is, since it was in the evidence directory to begin with. Where the
+    leading token is generic for two different papers, they merge, and the
+    drift ranking understates them. Both are corpus-hygiene issues, not
+    detection failures: a merged or mislabelled source changes which name the
+    finding is attributed to, never whether the value was found.
+    """
+    return path.stem.split("_", 1)[0]
 
 
 ABBREV_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9]*(?:[-/][A-Za-z0-9]+)*\b")
@@ -239,12 +290,10 @@ def term_drift(text: str, paths: list[Path], top: int = 12) -> dict:
             raw = path.read_text(errors="ignore")
         except OSError:
             continue
-        if path.suffix.lower() in (".xml", ".html", ".htm"):
-            raw = de_markup(raw)
         # Reference lists are dense with the abbreviations of other papers
         # (PMID, DOI, RCT) and would otherwise inflate the corpus that decides
         # whether a draft's term is attested anywhere.
-        raw = strip_machine_identifiers(raw)
+        raw = clean_source(raw, path.suffix)
         counts: Counter = Counter()
         # Both the abbreviation and its spelled-out form are counted, so
         # "alkaline phosphatase" matches a source that never abbreviates and
@@ -256,7 +305,13 @@ def term_drift(text: str, paths: list[Path], top: int = 12) -> dict:
         for expansion in {e for values in EXPANSIONS.values() for e in values}:
             if len(expansion) > 4:
                 counts[expansion] += lowered.count(expansion)
-        per_source[path.stem] = counts
+        # Accumulated, not assigned: a paper whose full text and appendix are
+        # both present must keep the tokens of both. Assigning would leave
+        # only whichever file the directory walk happened to reach last, and
+        # a term used throughout the full text but not the appendix would
+        # then read as unattested in its own source.
+        name = source_identity(path)
+        per_source.setdefault(name, Counter()).update(counts)
         corpus.update({t for t in counts if t.isupper() and 2 <= len(t) <= 6})
 
     used = {t for t in ABBREV_RE.findall(body_text(text)) if t.isupper() and 2 <= len(t) <= 6}
@@ -383,9 +438,7 @@ def source_number_pool(paths: list[Path]) -> dict[str, set[str]]:
             text = path.read_text(errors="ignore")
         except OSError:
             continue
-        if path.suffix.lower() in (".xml", ".html", ".htm"):
-            text = de_markup(text)
-        text = strip_machine_identifiers(text)
+        text = clean_source(text, path.suffix)
         counts: Counter = Counter()
         for canonical, _ in numbers_in(text):
             counts[canonical] += 1
@@ -393,12 +446,14 @@ def source_number_pool(paths: list[Path]) -> dict[str, set[str]]:
                 exact.add(canonical)
             else:
                 bare.add(canonical)
-        # Keyed on the stem so a JATS XML and its extracted .txt count as
-        # one source rather than two, which would overstate how widely a
-        # value is corroborated. Counts are summed across the two formats.
+        # Keyed on the paper, not the file: a JATS XML and its extracted .txt,
+        # or a full text and its appendix, are one source rather than two, and
+        # counting them separately overstates how widely a value is
+        # corroborated. Counts are summed across every carrier.
         for canonical, n in counts.items():
             per_source = seen_in.setdefault(canonical, {})
-            per_source[path.stem] = per_source.get(path.stem, 0) + n
+            name = source_identity(path)
+            per_source[name] = per_source.get(name, 0) + n
     percent_forms = {v.rstrip("%").rstrip("p") for v in exact}
     # Bare magnitudes are kept beside the unit-bearing forms. A draft that
     # writes "−1.4 percentage points" where the source writes "−1·4%" has the

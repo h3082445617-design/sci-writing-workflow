@@ -118,9 +118,15 @@ def classify(record: dict, cited_year: int | None) -> tuple[str, str | None]:
             return STATUS_DUAL_YEAR, (
                 f"online {online}, print {print_year}; draft uses {cited_year}"
             )
-        if created and cited_year == created and created != (published or created):
+        # The issue year is whichever of print, published or online Crossref
+        # supplies; created tracks first posting and is not an issue date. The
+        # earlier form of this comparison read `created != (published or
+        # created)`, which is never true when published is absent -- so the
+        # status this check exists to produce could not be reached.
+        issue_year = print_year or published or online
+        if created and issue_year and cited_year == created and created != issue_year:
             return STATUS_ONLINE_AHEAD, (
-                f"first posted {created}, issue dated {published or print_year}; "
+                f"first posted {created}, issue dated {issue_year}; "
                 f"draft uses {cited_year}"
             )
         return STATUS_MATCH, None
